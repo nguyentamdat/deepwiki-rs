@@ -11,6 +11,8 @@ use crate::i18n::TargetLanguage;
 pub enum LLMProvider {
     #[serde(rename = "openai")]
     OpenAI,
+    #[serde(rename = "openai-codex")]
+    OpenAICodex,
     #[serde(rename = "moonshot")]
     Moonshot,
     #[serde(rename = "deepseek")]
@@ -37,6 +39,7 @@ impl std::fmt::Display for LLMProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LLMProvider::OpenAI => write!(f, "openai"),
+            LLMProvider::OpenAICodex => write!(f, "openai-codex"),
             LLMProvider::Moonshot => write!(f, "moonshot"),
             LLMProvider::DeepSeek => write!(f, "deepseek"),
             LLMProvider::Mistral => write!(f, "mistral"),
@@ -54,6 +57,7 @@ impl std::str::FromStr for LLMProvider {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "openai" => Ok(LLMProvider::OpenAI),
+            "openai-codex" | "openaicodex" | "codex" => Ok(LLMProvider::OpenAICodex),
             "moonshot" => Ok(LLMProvider::Moonshot),
             "deepseek" => Ok(LLMProvider::DeepSeek),
             "mistral" => Ok(LLMProvider::Mistral),
@@ -62,6 +66,23 @@ impl std::str::FromStr for LLMProvider {
             "gemini" => Ok(LLMProvider::Gemini),
             "ollama" => Ok(LLMProvider::Ollama),
             _ => Err(format!("Unknown provider: {}", s)),
+        }
+    }
+}
+
+impl LLMProvider {
+    pub fn default_api_base_url(&self) -> Option<&'static str> {
+        match self {
+            LLMProvider::OpenAICodex => Some("https://api.openai.com/v1"),
+            LLMProvider::Ollama => Some("http://localhost:11434"),
+            _ => None,
+        }
+    }
+
+    pub fn default_models(&self) -> Option<(&'static str, &'static str)> {
+        match self {
+            LLMProvider::OpenAICodex => Some(("gpt-5-codex-mini", "gpt-5-codex")),
+            _ => None,
         }
     }
 }
@@ -228,11 +249,11 @@ pub struct BoundaryAnalysisConfig {
 }
 
 fn default_code_insights_limit() -> usize {
-    25  // Reduced default to balance performance and quality
+    25 // Reduced default to balance performance and quality
 }
 
 fn default_files_threshold() -> Option<usize> {
-    Some(100)  // Reduced threshold for better performance
+    Some(100) // Reduced threshold for better performance
 }
 
 /// Knowledge configuration for external documentation sources
@@ -715,6 +736,23 @@ impl Default for LLMConfig {
     }
 }
 
+impl LLMConfig {
+    pub fn apply_provider_defaults(&mut self, preserve_api_base_url: bool, preserve_models: bool) {
+        if !preserve_api_base_url {
+            if let Some(api_base_url) = self.provider.default_api_base_url() {
+                self.api_base_url = api_base_url.to_string();
+            }
+        }
+
+        if !preserve_models {
+            if let Some((efficient, powerful)) = self.provider.default_models() {
+                self.model_efficient = efficient.to_string();
+                self.model_powerful = powerful.to_string();
+            }
+        }
+    }
+}
+
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
@@ -742,9 +780,96 @@ mod tests {
     #[test]
     fn test_boundary_analysis_default_values() {
         let config = BoundaryAnalysisConfig::default();
-        
+
         assert_eq!(config.code_insights_limit, 25);
         assert_eq!(config.include_source_code, false);
         assert_eq!(config.only_directories_when_files_more_than, Some(100));
+    }
+
+    #[test]
+    fn test_openai_codex_provider_parses_aliases_and_displays_canonical_name() {
+        for provider_name in ["openai-codex", "openaicodex", "codex"] {
+            assert_eq!(
+                provider_name.parse::<LLMProvider>().unwrap(),
+                LLMProvider::OpenAICodex
+            );
+        }
+
+        assert_eq!(LLMProvider::OpenAICodex.to_string(), "openai-codex");
+    }
+
+    #[test]
+    fn test_openai_codex_provider_defaults_respect_preservation_flags() {
+        struct Case {
+            name: &'static str,
+            preserve_api_base_url: bool,
+            preserve_models: bool,
+            expected_api_base_url: &'static str,
+            expected_model_efficient: &'static str,
+            expected_model_powerful: &'static str,
+        }
+
+        let cases = [
+            Case {
+                name: "apply all codex defaults",
+                preserve_api_base_url: false,
+                preserve_models: false,
+                expected_api_base_url: "https://api.openai.com/v1",
+                expected_model_efficient: "gpt-5-codex-mini",
+                expected_model_powerful: "gpt-5-codex",
+            },
+            Case {
+                name: "preserve api base only",
+                preserve_api_base_url: true,
+                preserve_models: false,
+                expected_api_base_url: "https://custom.example/v1",
+                expected_model_efficient: "gpt-5-codex-mini",
+                expected_model_powerful: "gpt-5-codex",
+            },
+            Case {
+                name: "preserve models only",
+                preserve_api_base_url: false,
+                preserve_models: true,
+                expected_api_base_url: "https://api.openai.com/v1",
+                expected_model_efficient: "custom-efficient",
+                expected_model_powerful: "custom-powerful",
+            },
+            Case {
+                name: "preserve all explicit values",
+                preserve_api_base_url: true,
+                preserve_models: true,
+                expected_api_base_url: "https://custom.example/v1",
+                expected_model_efficient: "custom-efficient",
+                expected_model_powerful: "custom-powerful",
+            },
+        ];
+
+        for case in cases {
+            let mut config = LLMConfig {
+                provider: LLMProvider::OpenAICodex,
+                api_base_url: "https://custom.example/v1".to_string(),
+                model_efficient: "custom-efficient".to_string(),
+                model_powerful: "custom-powerful".to_string(),
+                ..LLMConfig::default()
+            };
+
+            config.apply_provider_defaults(case.preserve_api_base_url, case.preserve_models);
+
+            assert_eq!(
+                config.api_base_url, case.expected_api_base_url,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                config.model_efficient, case.expected_model_efficient,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                config.model_powerful, case.expected_model_powerful,
+                "{}",
+                case.name
+            );
+        }
     }
 }

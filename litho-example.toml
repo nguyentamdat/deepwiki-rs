@@ -120,8 +120,8 @@ included_extensions = []
 
 [llm]
 # LLM Provider to use
-# Supported: "openai", "moonshot", "deepseek", "mistral", "openrouter",
-#            "anthropic", "gemini", "ollama"
+# Supported: "openai", "openai-codex", "moonshot", "deepseek", "mistral",
+#            "openrouter", "anthropic", "gemini", "ollama"
 provider = "openai"
 
 # API Key for the LLM provider
@@ -132,6 +132,7 @@ api_key = "${LITHO_LLM_API_KEY}"
 
 # Base URL for the LLM API
 # OpenAI: "https://api.openai.com/v1"
+# OpenAI Codex: "https://api.openai.com/v1"
 # Anthropic: "https://api.anthropic.com"
 # DeepSeek: "https://api.deepseek.com"
 # Ollama: "http://localhost:11434/v1"
@@ -142,6 +143,7 @@ internal_path = ".litho"
 
 # High-efficiency model for regular inference tasks
 # OpenAI examples: "gpt-4o-mini", "gpt-3.5-turbo"
+# OpenAI Codex examples: "gpt-5-codex-mini"
 # Anthropic examples: "claude-3-5-haiku-20241022"
 # DeepSeek examples: "deepseek-chat"
 # Ollama examples: "llama3.2", "qwen2.5-coder"
@@ -149,6 +151,7 @@ model_efficient = "gpt-4o-mini"
 
 # High-quality model for complex reasoning tasks (and fallback for efficient model)
 # OpenAI examples: "gpt-4o", "gpt-4-turbo"
+# OpenAI Codex examples: "gpt-5-codex"
 # Anthropic examples: "claude-3-5-sonnet-20241022", "claude-3-opus-20240229"
 # DeepSeek examples: "deepseek-reasoner"
 # Ollama examples: "llama3.2:70b", "qwen2.5-coder:32b"

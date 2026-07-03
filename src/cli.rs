@@ -79,7 +79,7 @@ pub struct Args {
     #[arg(long)]
     pub tool_concurrency: Option<usize>,
 
-    /// LLM Provider (openai, mistral, openrouter, anthropic, deepseek)
+    /// LLM Provider (openai, openai-codex, mistral, openrouter, anthropic, deepseek, gemini, ollama)
     #[arg(long)]
     pub llm_provider: Option<String>,
 
@@ -139,7 +139,9 @@ impl Args {
 
         let mut config = if let Some(config_path) = &self.config {
             // If config file path is explicitly specified, load from that path
-            let msg = target_lang.msg_config_read_error().replace("{:?}", &format!("{:?}", config_path));
+            let msg = target_lang
+                .msg_config_read_error()
+                .replace("{:?}", &format!("{:?}", config_path));
             Config::from_file(config_path).expect(&msg)
         } else {
             // If no config file is explicitly specified, try loading from default location
@@ -148,13 +150,22 @@ impl Args {
                 .join("litho.toml");
 
             if default_config_path.exists() {
-                let msg = target_lang.msg_config_read_error().replace("{:?}", &format!("{:?}", default_config_path));
+                let msg = target_lang
+                    .msg_config_read_error()
+                    .replace("{:?}", &format!("{:?}", default_config_path));
                 Config::from_file(&default_config_path).expect(&msg)
             } else {
                 // Default config file doesn't exist, use default values
                 Config::default()
             }
         };
+
+        let default_llm_config = crate::config::LLMConfig::default();
+        let explicit_api_base_url = self.llm_api_base_url.is_some()
+            || config.llm.api_base_url != default_llm_config.api_base_url;
+        let explicit_models = config.llm.model_efficient != default_llm_config.model_efficient
+            || config.llm.model_powerful != default_llm_config.model_powerful;
+        let model_efficient_overridden = self.model_efficient.is_some();
 
         // Override settings from config file
         config.project_path = self.project_path.clone();
@@ -171,16 +182,18 @@ impl Args {
             if let Ok(provider) = provider_str.parse::<LLMProvider>() {
                 config.llm.provider = provider;
             } else {
-                let msg = target_lang.msg_unknown_provider().replace("{}", &provider_str);
+                let msg = target_lang
+                    .msg_unknown_provider()
+                    .replace("{}", &provider_str);
                 eprintln!("{}", msg);
             }
         }
         if let Some(llm_api_base_url) = self.llm_api_base_url {
             config.llm.api_base_url = llm_api_base_url;
         } else {
-            if config.llm.provider == LLMProvider::Ollama {
-                config.llm.api_base_url = "http://localhost:11434".to_owned();
-            }
+            config
+                .llm
+                .apply_provider_defaults(explicit_api_base_url, explicit_models);
         }
         if let Some(llm_api_key) = self.llm_api_key {
             config.llm.api_key = llm_api_key;
@@ -190,7 +203,7 @@ impl Args {
         }
         if let Some(model_powerful) = self.model_powerful {
             config.llm.model_powerful = model_powerful;
-        } else {
+        } else if model_efficient_overridden && config.llm.provider.default_models().is_none() {
             config.llm.model_powerful = config.llm.model_efficient.to_string();
         }
         if let Some(max_tokens) = self.max_tokens {
@@ -212,7 +225,9 @@ impl Args {
             if let Ok(target_language) = target_language_str.parse::<TargetLanguage>() {
                 config.target_language = target_language;
             } else {
-                let msg = target_lang.msg_unknown_language().replace("{}", &target_language_str);
+                let msg = target_lang
+                    .msg_unknown_language()
+                    .replace("{}", &target_language_str);
                 eprintln!("{}", msg);
             }
         }
@@ -230,10 +245,112 @@ impl Args {
             config.boundary_analysis.include_source_code = include_source;
         }
         if let Some(only_dirs_threshold) = self.boundary_only_directories_when_files_more_than {
-            config.boundary_analysis.only_directories_when_files_more_than = Some(only_dirs_threshold);
+            config
+                .boundary_analysis
+                .only_directories_when_files_more_than = Some(only_dirs_threshold);
         }
 
-
         config
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TempConfigFile {
+        path: PathBuf,
+    }
+
+    impl TempConfigFile {
+        fn empty() -> Self {
+            let unique_suffix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "deepwiki-rs-openai-codex-tests-{}-{}.toml",
+                std::process::id(),
+                unique_suffix
+            ));
+
+            fs::write(&path, "").unwrap();
+
+            Self { path }
+        }
+    }
+
+    impl Drop for TempConfigFile {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+
+    #[test]
+    fn test_to_config_applies_openai_codex_defaults_without_explicit_overrides() {
+        let config_file = TempConfigFile::empty();
+
+        let config = Args::parse_from([
+            "litho",
+            "--config",
+            config_file.path.to_str().unwrap(),
+            "--llm-provider",
+            "openai-codex",
+        ])
+        .to_config();
+
+        assert_eq!(config.llm.provider, LLMProvider::OpenAICodex);
+        assert_eq!(config.llm.api_base_url, "https://api.openai.com/v1");
+        assert_eq!(config.llm.model_efficient, "gpt-5-codex-mini");
+        assert_eq!(config.llm.model_powerful, "gpt-5-codex");
+    }
+
+    #[test]
+    fn test_to_config_preserves_explicit_openai_codex_overrides() {
+        let config_file = TempConfigFile::empty();
+
+        let config = Args::parse_from([
+            "litho",
+            "--config",
+            config_file.path.to_str().unwrap(),
+            "--llm-provider",
+            "openai-codex",
+            "--llm-api-base-url",
+            "https://custom.example/v1",
+            "--model-efficient",
+            "custom-efficient",
+            "--model-powerful",
+            "custom-powerful",
+        ])
+        .to_config();
+
+        assert_eq!(config.llm.provider, LLMProvider::OpenAICodex);
+        assert_eq!(config.llm.api_base_url, "https://custom.example/v1");
+        assert_eq!(config.llm.model_efficient, "custom-efficient");
+        assert_eq!(config.llm.model_powerful, "custom-powerful");
+    }
+
+    #[test]
+    fn test_to_config_keeps_codex_powerful_default_when_only_efficient_model_is_overridden() {
+        let config_file = TempConfigFile::empty();
+
+        let config = Args::parse_from([
+            "litho",
+            "--config",
+            config_file.path.to_str().unwrap(),
+            "--llm-provider",
+            "openai-codex",
+            "--model-efficient",
+            "custom-efficient",
+        ])
+        .to_config();
+
+        assert_eq!(config.llm.provider, LLMProvider::OpenAICodex);
+        assert_eq!(config.llm.model_efficient, "custom-efficient");
+        assert_eq!(config.llm.model_powerful, "gpt-5-codex");
     }
 }
