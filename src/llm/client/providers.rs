@@ -53,7 +53,6 @@ impl ProviderClient {
             LLMProvider::OpenAICodex => Ok(ProviderClient::OpenAICodex(CodexOAuthClient::new(
                 &config.api_base_url,
                 config.timeout_seconds,
-                config.max_tokens,
             )?)),
             LLMProvider::Moonshot => {
                 let client = rig::providers::moonshot::Client::builder()

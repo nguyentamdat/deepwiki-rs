@@ -24,7 +24,6 @@ pub struct CodexOAuthClient {
     auth: CodexOAuthAuth,
     http: reqwest::Client,
     timeout: std::time::Duration,
-    max_output_tokens: u32,
 }
 
 #[derive(Clone)]
@@ -62,13 +61,12 @@ struct AuthClaims {
 }
 
 impl CodexOAuthClient {
-    pub fn new(base_url: &str, timeout_seconds: u64, max_output_tokens: u32) -> Result<Self> {
+    pub fn new(base_url: &str, timeout_seconds: u64) -> Result<Self> {
         Ok(Self {
             base_url: normalize_codex_base_url(base_url),
             auth: CodexOAuthAuth::from_codex_home()?,
             http: reqwest::Client::new(),
             timeout: std::time::Duration::from_secs(timeout_seconds),
-            max_output_tokens,
         })
     }
 
@@ -114,13 +112,9 @@ impl CodexOAuthClient {
             "tool_choice": "none",
             "parallel_tool_calls": false,
             "store": false,
-            "stream": false,
+            "stream": true,
             "include": []
         });
-
-        if self.max_output_tokens > 0 {
-            body["max_output_tokens"] = serde_json::json!(self.max_output_tokens);
-        }
 
         if !instructions.is_empty() {
             body["instructions"] = Value::String(instructions.to_string());
@@ -150,17 +144,13 @@ impl CodexOAuthClient {
             anyhow::bail!("Codex OAuth Responses API HTTP error {}", status);
         }
 
-        let json: Value = response
-            .json()
+        let sse = response
+            .text()
             .await
-            .context("Failed to parse Codex OAuth Responses API response")?;
+            .context("Failed to read Codex OAuth Responses API stream")?;
 
-        extract_responses_text(&json).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Invalid Codex OAuth Responses API response format: {}",
-                json
-            )
-        })
+        extract_responses_sse_text(&sse)
+            .ok_or_else(|| anyhow::anyhow!("Invalid Codex OAuth Responses API stream format"))
     }
 }
 
@@ -240,27 +230,12 @@ where
     T: JsonSchema + Serialize + for<'de> Deserialize<'de> + Send + Sync + 'static,
 {
     pub async fn extract(&self, prompt: &str) -> Result<T> {
-        let schema = schemars::schema_for!(T);
-        let text = serde_json::json!({
-            "format": {
-                "type": "json_schema",
-                "name": "deepwiki_rs_extraction",
-                "strict": true,
-                "schema": schema
-            }
-        });
-
         let mut last_error = None;
         for attempt in 1..=self.max_retries.max(1) {
             let enhanced_prompt = build_extraction_prompt(prompt, last_error.as_deref());
             match self
                 .client
-                .responses_text(
-                    &self.model,
-                    &self.instructions,
-                    &enhanced_prompt,
-                    Some(text.clone()),
-                )
+                .responses_text(&self.model, &self.instructions, &enhanced_prompt, None)
                 .await
                 .and_then(|response| parse_and_validate::<T>(&response, attempt))
             {
@@ -367,6 +342,48 @@ fn extract_responses_text(json: &Value) -> Option<String> {
     }
 
     (!chunks.is_empty()).then(|| chunks.join(""))
+}
+
+fn extract_responses_sse_text(sse: &str) -> Option<String> {
+    let mut chunks = Vec::new();
+    let mut completed_output: Option<String> = None;
+
+    for block in sse.split("\n\n") {
+        let mut data_lines = Vec::new();
+        for line in block.lines() {
+            if let Some(data) = line.strip_prefix("data: ") {
+                data_lines.push(data);
+            }
+        }
+        if data_lines.is_empty() {
+            continue;
+        }
+
+        let data = data_lines.join("\n");
+        let Ok(json) = serde_json::from_str::<Value>(&data) else {
+            continue;
+        };
+
+        match json.get("type").and_then(Value::as_str) {
+            Some("response.output_text.delta") => {
+                if let Some(delta) = json.get("delta").and_then(Value::as_str) {
+                    chunks.push(delta.to_string());
+                }
+            }
+            Some("response.completed") => {
+                if let Some(text) = json.get("response").and_then(extract_responses_text) {
+                    completed_output = Some(text);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !chunks.is_empty() {
+        Some(chunks.join(""))
+    } else {
+        completed_output
+    }
 }
 
 fn build_extraction_prompt(base_prompt: &str, previous_error: Option<&str>) -> String {
@@ -480,6 +497,21 @@ mod tests {
             }]
         });
         assert_eq!(extract_responses_text(&payload).unwrap(), "hello");
+    }
+
+    #[test]
+    fn extracts_streaming_responses_text_deltas() {
+        let sse = r#"event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"hel"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"lo"}
+
+event: response.completed
+data: {"type":"response.completed","response":{"output":[{"content":[{"type":"output_text","text":"ignored fallback"}]}]}}
+"#;
+
+        assert_eq!(extract_responses_sse_text(sse).unwrap(), "hello");
     }
 
     #[test]
