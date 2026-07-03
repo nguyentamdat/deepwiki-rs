@@ -8,6 +8,7 @@ use std::future::Future;
 use crate::{config::Config, llm::client::utils::evaluate_befitting_model};
 
 mod agent_builder;
+mod codex_oauth;
 mod ollama_extractor;
 mod openai_compatible_extractor;
 mod providers;
@@ -229,7 +230,9 @@ impl LLMClient {
         let agent_builder = self.get_agent_builder();
         let agent = agent_builder.build_agent_without_tools(system_prompt);
 
-        self.retry_with_backoff(|| async { agent.prompt(user_prompt, 1).await.map_err(|e| e.into()) })
-            .await
+        self.retry_with_backoff(|| async {
+            agent.prompt(user_prompt, 1).await.map_err(|e| e.into())
+        })
+        .await
     }
 }

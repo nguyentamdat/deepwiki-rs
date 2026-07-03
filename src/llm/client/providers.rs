@@ -16,6 +16,7 @@ use crate::{
     llm::tools::time::AgentToolTime,
 };
 
+use super::codex_oauth::{CodexOAuthClient, CodexOAuthExtractor};
 use super::ollama_extractor::OllamaExtractorWrapper;
 use super::openai_compatible_extractor::OpenAICompatibleExtractorWrapper;
 
@@ -23,7 +24,7 @@ use super::openai_compatible_extractor::OpenAICompatibleExtractorWrapper;
 #[derive(Clone)]
 pub enum ProviderClient {
     OpenAI(rig::providers::openai::CompletionsClient),
-    OpenAICodex(rig::providers::openai::CompletionsClient),
+    OpenAICodex(CodexOAuthClient),
     Moonshot(rig::providers::moonshot::Client),
     DeepSeek(rig::providers::deepseek::Client),
     Mistral(rig::providers::mistral::Client),
@@ -49,14 +50,11 @@ impl ProviderClient {
                 };
                 Ok(ProviderClient::OpenAI(client))
             }
-            LLMProvider::OpenAICodex => {
-                let client = rig::providers::openai::Client::builder()
-                    .api_key(&config.api_key)
-                    .base_url(&config.api_base_url)
-                    .build()?
-                    .completions_api();
-                Ok(ProviderClient::OpenAICodex(client))
-            }
+            LLMProvider::OpenAICodex => Ok(ProviderClient::OpenAICodex(CodexOAuthClient::new(
+                &config.api_base_url,
+                config.timeout_seconds,
+                config.max_tokens,
+            )?)),
             LLMProvider::Moonshot => {
                 let client = rig::providers::moonshot::Client::builder()
                     .api_key(&config.api_key)
@@ -114,6 +112,10 @@ impl ProviderClient {
         }
     }
 
+    pub fn supports_preset_tools(&self) -> bool {
+        !matches!(self, ProviderClient::OpenAICodex(_))
+    }
+
     /// Create Agent
     pub fn create_agent(
         &self,
@@ -140,24 +142,11 @@ impl ProviderClient {
                     api_key: config.api_key.clone(),
                 }
             }
-            ProviderClient::OpenAICodex(client) => {
-                let mut builder = client
-                    .agent(model)
-                    .preamble(system_prompt)
-                    .max_tokens(config.max_tokens.into());
-
-                if let Some(temp) = config.temperature {
-                    builder = builder.temperature(temp);
-                }
-
-                let agent = builder.build();
-                ProviderAgent::OpenAICodex {
-                    agent,
-                    base_url: config.api_base_url.clone(),
-                    model: model.to_string(),
-                    api_key: config.api_key.clone(),
-                }
-            }
+            ProviderClient::OpenAICodex(client) => ProviderAgent::OpenAICodex {
+                client: client.clone(),
+                instructions: system_prompt.to_string(),
+                model: model.to_string(),
+            },
             ProviderClient::Moonshot(client) => {
                 let mut builder = client.agent(model).preamble(system_prompt);
 
@@ -280,29 +269,11 @@ impl ProviderClient {
                     api_key: config.api_key.clone(),
                 }
             }
-            ProviderClient::OpenAICodex(client) => {
-                let mut builder = client
-                    .agent(model)
-                    .preamble(system_prompt)
-                    .max_tokens(config.max_tokens.into())
-                    .default_max_turns(config.max_turns);
-
-                if let Some(temp) = config.temperature {
-                    builder = builder.temperature(temp);
-                }
-
-                let agent = builder
-                    .tool(file_explorer.clone())
-                    .tool(file_reader.clone())
-                    .tool(tool_time)
-                    .build();
-                ProviderAgent::OpenAICodex {
-                    agent,
-                    base_url: config.api_base_url.clone(),
-                    model: model.to_string(),
-                    api_key: config.api_key.clone(),
-                }
-            }
+            ProviderClient::OpenAICodex(client) => ProviderAgent::OpenAICodex {
+                client: client.clone(),
+                instructions: system_prompt.to_string(),
+                model: model.to_string(),
+            },
             ProviderClient::Moonshot(client) => {
                 let mut builder = client
                     .agent(model)
@@ -470,25 +441,11 @@ impl ProviderClient {
                 ProviderExtractor::OpenAI(wrapper)
             }
             ProviderClient::OpenAICodex(client) => {
-                let mut builder = client
-                    .agent(model)
-                    .preamble(system_prompt)
-                    .max_tokens(config.max_tokens.into());
-
-                if let Some(temp) = config.temperature {
-                    builder = builder.temperature(temp);
-                }
-
-                let agent = builder.build();
-                let wrapper = OpenAICompatibleExtractorWrapper::new(
-                    agent,
-                    config.retry_attempts,
-                    config.api_base_url.clone(),
+                ProviderExtractor::OpenAICodex(client.extractor(
                     model.to_string(),
-                    config.api_key.clone(),
-                );
-
-                ProviderExtractor::OpenAICodex(wrapper)
+                    system_prompt.to_string(),
+                    config.retry_attempts,
+                ))
             }
             ProviderClient::Moonshot(client) => {
                 let extractor = client
@@ -579,10 +536,9 @@ pub enum ProviderAgent {
         api_key: String,
     },
     OpenAICodex {
-        agent: Agent<rig::providers::openai::completion::CompletionModel>,
-        base_url: String,
+        client: CodexOAuthClient,
+        instructions: String,
         model: String,
-        api_key: String,
     },
     Mistral(Agent<rig::providers::mistral::CompletionModel>),
     OpenRouter(Agent<rig::providers::openrouter::CompletionModel>),
@@ -627,30 +583,10 @@ impl ProviderAgent {
                 }
             }
             ProviderAgent::OpenAICodex {
-                agent,
-                base_url,
+                client,
+                instructions,
                 model,
-                api_key,
-            } => {
-                match agent
-                    .prompt(prompt)
-                    .with_tool_concurrency(concurrency)
-                    .await
-                {
-                    Ok(result) => Ok(result),
-                    Err(e) => {
-                        let error_msg = format!("{:?}", e);
-                        if error_msg.contains("ApiResponse")
-                            || error_msg.contains("untagged enum")
-                            || error_msg.contains("JsonError")
-                        {
-                            Self::prompt_via_http(base_url, model, api_key, prompt).await
-                        } else {
-                            Err(e.into())
-                        }
-                    }
-                }
-            }
+            } => client.prompt(model, instructions, prompt).await,
             ProviderAgent::Moonshot(agent) => agent
                 .prompt(prompt)
                 .with_tool_concurrency(concurrency)
@@ -752,7 +688,7 @@ where
     T: JsonSchema + for<'a> Deserialize<'a> + Serialize + Send + Sync + 'static,
 {
     OpenAI(OpenAICompatibleExtractorWrapper<T>),
-    OpenAICodex(OpenAICompatibleExtractorWrapper<T>),
+    OpenAICodex(CodexOAuthExtractor<T>),
     Mistral(Extractor<rig::providers::mistral::CompletionModel, T>),
     OpenRouter(Extractor<rig::providers::openrouter::CompletionModel, T>),
     Anthropic(Extractor<rig::providers::anthropic::completion::CompletionModel, T>),

@@ -124,15 +124,15 @@ included_extensions = []
 #            "openrouter", "anthropic", "gemini", "ollama"
 provider = "openai"
 
-# API Key for the LLM provider
-# SECURITY: Never commit your real API key! Use environment variables instead.
-# Set via: $env:LITHO_LLM_API_KEY = "your-key-here" (PowerShell)
-#      or: export LITHO_LLM_API_KEY="your-key-here" (Bash)
-api_key = "${LITHO_LLM_API_KEY}"
+# API Key for API-key providers. For "openai-codex", run `codex login`;
+# the provider reads the Codex OAuth session from $CODEX_HOME/auth.json
+# or ~/.codex/auth.json instead of this field.
+# SECURITY: Never commit your real API key.
+api_key = ""
 
 # Base URL for the LLM API
 # OpenAI: "https://api.openai.com/v1"
-# OpenAI Codex: "https://api.openai.com/v1"
+# OpenAI Codex OAuth: "https://chatgpt.com/backend-api/codex"
 # Anthropic: "https://api.anthropic.com"
 # DeepSeek: "https://api.deepseek.com"
 # Ollama: "http://localhost:11434/v1"

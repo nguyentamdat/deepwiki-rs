@@ -304,7 +304,10 @@ mod tests {
         .to_config();
 
         assert_eq!(config.llm.provider, LLMProvider::OpenAICodex);
-        assert_eq!(config.llm.api_base_url, "https://api.openai.com/v1");
+        assert_eq!(
+            config.llm.api_base_url,
+            "https://chatgpt.com/backend-api/codex"
+        );
         assert_eq!(config.llm.model_efficient, "gpt-5-codex-mini");
         assert_eq!(config.llm.model_powerful, "gpt-5-codex");
     }

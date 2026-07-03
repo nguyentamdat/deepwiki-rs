@@ -478,11 +478,11 @@ deepwiki-rs --skip-preprocessing --skip-research
 
 ### Advanced Options
 ```sh
+# Use Codex OAuth provider (requires `codex login`; reads ~/.codex/auth.json)
+deepwiki-rs -p ./src --llm-provider openai-codex --model-efficient gpt-5-codex-mini --model-powerful gpt-5-codex
+
 # Turn off ReAct Mode to avoid auto-scanning project files via tool-calls
 deepwiki-rs -p ./src --disable-preset-tools --llm-api-base-url <your llm provider base-api> --llm-api-key <your api key> --model-efficient GPT-5-mini
-
-# Set up both the efficient model and the powerful model simultaneously
-deepwiki-rs -p ./src --model-efficient GPT-5-mini --model-poweruful GPT-5-Pro --llm-api-base-url <your llm provider base-api> --llm_api_key <your api key> --model-efficient GPT-5-mini
 ```
 
 ## 📚 External Knowledge Integration

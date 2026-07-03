@@ -16,6 +16,18 @@ cargo build --release
 
 ## LLM Provider Configuration
 
+### OpenAI Codex OAuth
+```bash
+# Authenticate once with the Codex CLI/IDE flow. Litho reads $CODEX_HOME/auth.json
+# or ~/.codex/auth.json and sends the OAuth bearer token to the Codex Responses API.
+codex login
+
+deepwiki-rs -p ./src \
+  --llm-provider openai-codex \
+  --model-efficient gpt-5-codex-mini \
+  --model-powerful gpt-5-codex
+```
+
 ### OpenAI
 ```bash
 deepwiki-rs -p ./src \

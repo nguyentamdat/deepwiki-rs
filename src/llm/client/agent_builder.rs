@@ -22,7 +22,7 @@ impl<'a> AgentBuilder<'a> {
     pub fn build_agent_with_tools(&self, system_prompt: &str) -> ProviderAgent {
         let llm_config = &self.config.llm;
 
-        if !llm_config.disable_preset_tools {
+        if !llm_config.disable_preset_tools && self.client.supports_preset_tools() {
             let file_explorer = AgentToolFileExplorer::new(self.config.clone());
             let file_reader = AgentToolFileReader::new(self.config.clone());
 

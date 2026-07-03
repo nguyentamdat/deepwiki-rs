@@ -73,7 +73,7 @@ impl std::str::FromStr for LLMProvider {
 impl LLMProvider {
     pub fn default_api_base_url(&self) -> Option<&'static str> {
         match self {
-            LLMProvider::OpenAICodex => Some("https://api.openai.com/v1"),
+            LLMProvider::OpenAICodex => Some("https://chatgpt.com/backend-api/codex"),
             LLMProvider::Ollama => Some("http://localhost:11434"),
             _ => None,
         }
@@ -814,7 +814,7 @@ mod tests {
                 name: "apply all codex defaults",
                 preserve_api_base_url: false,
                 preserve_models: false,
-                expected_api_base_url: "https://api.openai.com/v1",
+                expected_api_base_url: "https://chatgpt.com/backend-api/codex",
                 expected_model_efficient: "gpt-5-codex-mini",
                 expected_model_powerful: "gpt-5-codex",
             },
@@ -830,7 +830,7 @@ mod tests {
                 name: "preserve models only",
                 preserve_api_base_url: false,
                 preserve_models: true,
-                expected_api_base_url: "https://api.openai.com/v1",
+                expected_api_base_url: "https://chatgpt.com/backend-api/codex",
                 expected_model_efficient: "custom-efficient",
                 expected_model_powerful: "custom-powerful",
             },
